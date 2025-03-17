@@ -1,0 +1,27 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: aws-load-balancer-controller
+  name: aws-load-balancer-controller
+  namespace: kube-system
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: aws-load-balancer-controller
+  template:
+    metadata:
+      labels:
+        app: aws-load-balancer-controller
+    spec:
+      serviceAccountName: aws-load-balancer-controller
+      containers:
+        - name: aws-load-balancer-controller
+          image: public.ecr.aws/eks/aws-load-balancer-controller:v2.6.1
+          args:
+            - --cluster-name=eks-test
+            - --ingress-class=alb
+          env:
+            - name: AWS_REGION
+              value: "ap-northeast-2"
