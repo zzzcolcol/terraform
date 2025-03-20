@@ -315,7 +315,7 @@ resource "aws_eks_cluster" "eks-test" {
   }
 
   access_config {
-    authentication_mode =  "CONFIG_MAP"
+    authentication_mode =  "API_AND_CONFIG_MAP"
     bootstrap_cluster_creator_admin_permissions = true
   }
 
@@ -348,24 +348,30 @@ resource "aws_iam_role_policy_attachment" "eks_ec2_registry_policy" {
   policy_arn = "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly"
 }
 
-resource "aws_iam_policy" "aws_load_balancer_controller_policy" {
-  name   = "AWSLoadBalancerControllerPolicy"
-  policy = file("./AWSLoadBalancerController.json") # JSON 파일 경로
-}
 
-# Attach the AWS Load Balancer Controller Policy to eks-test-node-role
-resource "aws_iam_role_policy_attachment" "eks_alb_policy_attachment" {
-  role       = aws_iam_role.eks-test-node-role.name
-  policy_arn = aws_iam_policy.aws_load_balancer_controller_policy.arn
-}
 
 
 # efs csi driver iam role creation
-resource "aws_iam_role" "eks_efs_csi_role" {
+resource "aws_iam_role" "efs_csi_role" {
   name = "EKS-efs-csi-role"
-  assume_role_policy = file("./efs-csi-driver.json")
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17",
+    Statement = [{
+      Effect = "Allow",
+      Principal = {
+        Service = "eks.amazonaws.com"
+      },
+      Action = "sts:AssumeRole"
+    }]
+  })
 }
 
+# 📌 EFS CSI 드라이버를 위한 IAM 정책 첨부
+resource "aws_iam_role_policy_attachment" "efs_csi_attach_policy" {
+  role       = aws_iam_role.efs_csi_role.name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonEFSCSIDriverPolicy"
+}
 
 
 # IAM Role for eks cloud autoscaler 
@@ -432,8 +438,8 @@ resource "aws_eks_node_group" "eks-test-node-group" {
   ]
 
   scaling_config {
-    desired_size = 2
-    max_size = 4
+    desired_size = 0
+    max_size = 6
     min_size = 0
   }
 
@@ -443,14 +449,16 @@ resource "aws_eks_node_group" "eks-test-node-group" {
     max_unavailable = 2
   }
     remote_access {
-    ec2_ssh_key               = "test"  # 키 페어 이름
+    ec2_ssh_key               = "my-key"  # 키 페어 이름
    source_security_group_ids = [aws_security_group.eks_node_sg.id]
   }
 
     tags = {
     "Name"  = "eks-test-node-group"
-    # "kubernetes.io/cluster/${var.cluster_name}" = "owned"  # 변수로 태그 적용
+    #"kubernetes.io/cluster/${var.cluster_name}" = "owned"  # 변수로 태그 적용
     "k8s.io/cluster-autoscaler/enabled"         = "true"
+    "k8s.io/cluster-autoscaler/${var.cluster_name}" = "owned"
+    "eks:nodegroup-name"                  = "eks-test-node-group"
   }
 
   depends_on = [ 
@@ -461,22 +469,6 @@ resource "aws_eks_node_group" "eks-test-node-group" {
 }
 
 
-# resource "aws_iam_role" "ebs_csi_role" {
-#   name = "ebs-csi-role"
-
-#   assume_role_policy = jsonencode({
-#     Version = "2012-10-17",
-#     Statement = [
-#       {
-#         Effect = "Allow",
-#         Principal = {
-#           Service = "eks.amazonaws.com"
-#         },
-#         Action = "sts:AssumeRole"
-#       }
-#     ]
-#   })
-# }
 
 resource "aws_iam_role" "ebs_csi_role" {
   name = "ebs-csi-role"
@@ -503,37 +495,37 @@ resource "aws_iam_role" "ebs_csi_role" {
 
 
 
-resource "aws_iam_policy" "ebs_csi_policy" {
-  name = "ebs-csi-policy"
-  description = "EBS CSI Driver policy for EKS"
-  policy = jsonencode({
-    Version = "2012-10-17",
-    Statement = [
-      {
-        Effect = "Allow",
-        Action = [
-          "ec2:CreateVolume",
-          "ec2:AttachVolume",
-          "ec2:DetachVolume",
-          "ec2:DeleteVolume",
-          "ec2:DescribeInstances",
-          "ec2:DescribeVolumes",
-          "ec2:DescribeVolumeAttribute",
-          "ec2:DescribeVolumeStatus",
-          "ec2:DescribeSnapshots",
-          "ec2:CreateTags",
-          "ec2:DeleteTags",
-          "sts:AssumeRoleWithWebIdentity"
-        ],
-        Resource = "*"
-      }
-    ]
-  })
-}
+# resource "aws_iam_policy" "ebs_csi_policy" {
+#   name = "ebs-csi-policy"
+#   description = "EBS CSI Driver policy for EKS"
+#   policy = jsonencode({
+#     Version = "2012-10-17",
+#     Statement = [
+#       {
+#         Effect = "Allow",
+#         Action = [
+#           "ec2:CreateVolume",
+#           "ec2:AttachVolume",
+#           "ec2:DetachVolume",
+#           "ec2:DeleteVolume",
+#           "ec2:DescribeInstances",
+#           "ec2:DescribeVolumes",
+#           "ec2:DescribeVolumeAttribute",
+#           "ec2:DescribeVolumeStatus",
+#           "ec2:DescribeSnapshots",
+#           "ec2:CreateTags",
+#           "ec2:DeleteTags",
+#           "sts:AssumeRoleWithWebIdentity"
+#         ],
+#         Resource = "*"
+#       }
+#     ]
+#   })
+# }
 
 resource "aws_iam_role_policy_attachment" "ebs_csi_attach_policy" {
   role       = aws_iam_role.ebs_csi_role.name
-  policy_arn = aws_iam_policy.ebs_csi_policy.arn
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonEBSCSIDriverPolicy"
 }
 
 
@@ -542,9 +534,12 @@ resource "aws_iam_role_policy_attachment" "ebs_csi_attach_policy" {
 resource "aws_eks_addon" "ebs_csi_addon" {
   cluster_name = aws_eks_cluster.eks-test.name  # EKS 클러스터 이름
   addon_name   = "aws-ebs-csi-driver"
-  # resolve_conflicts = "OVERWRITE"
+  addon_version = "v1.38.1-eksbuild.1"
+  resolve_conflicts_on_create = "OVERWRITE"
+  resolve_conflicts_on_update = "PRESERVE"
   
   service_account_role_arn = aws_iam_role.ebs_csi_role.arn
+  # depends_on = [aws_iam_role_policy_attachment.ebs_csi_policy_attach]
 }
 resource "aws_eks_addon" "ebs_metric_addon" {
   cluster_name = aws_eks_cluster.eks-test.name  # EKS 클러스터 이름
@@ -573,7 +568,14 @@ resource "aws_eks_addon" "kube-proxy" {
   addon_name = "kube-proxy"
 # resolve_conflicts_on_create  = "OVERWRITE"
 }
-
+resource "aws_eks_addon" "efs_csi_driver" {
+  cluster_name = aws_eks_cluster.eks-test.name
+  addon_name = "aws-efs-csi-driver"
+  addon_version = "v2.1.0-eksbuild.1"
+# resolve_conflicts_on_create  = "OVERWRITE"
+service_account_role_arn = aws_iam_role.efs_csi_role.arn
+depends_on = [aws_iam_role_policy_attachment.efs_csi_attach_policy]
+}
 
 
 resource "aws_eks_addon" "coredns" {
@@ -751,6 +753,46 @@ output "kubeconfig-certificate-authority-data" {
   value = aws_eks_cluster.eks-test.certificate_authority[0].data
 }
 
+# 📌 EFS 파일 시스템 생성
+resource "aws_efs_file_system" "efs" {
+  creation_token   = "my-efs"
+  performance_mode = "generalPurpose"
+  throughput_mode  = "bursting"
 
+  tags = {
+    Name = "my-efs"
+  }
+}
 
+# 📌 EFS 보안 그룹 생성
+resource "aws_security_group" "efs_sg" {
+  name        = "efs-sg"
+  description = "Allow NFS traffic for EFS"
+  vpc_id      = aws_vpc.eks-test.id
 
+  ingress {
+    from_port   = 2049
+    to_port     = 2049
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]  # 필요시 제한 가능
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = {
+    Name = "efs-security-group"
+  }
+}
+
+# 📌 EFS 마운트 타겟 생성 (프라이빗 서브넷에서 사용)
+resource "aws_efs_mount_target" "efs_target" {
+  count          = 2  # 가용영역 2개에 대해 생성
+  file_system_id = aws_efs_file_system.efs.id
+  subnet_id      = element([aws_subnet.eks-test-private2a.id, aws_subnet.eks-test-private2c.id], count.index)
+  security_groups = [aws_security_group.efs_sg.id]
+}
