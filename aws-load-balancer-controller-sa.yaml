@@ -4,4 +4,4 @@ metadata:
   name: aws-load-balancer-controller
   namespace: kube-system
   annotations:
-    eks.amazonaws.com/role-arn: arn:aws:iam::120653558546:role/AWSLoadBalancerControllerRole
+    eks.amazonaws.com/role-arn: arn:aws:iam::120653558546:role/aws-load-balancer-controller
