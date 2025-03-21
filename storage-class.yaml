@@ -1,0 +1,11 @@
+# 📌 1️⃣ StorageClass 정의 (AWS EBS CSI Driver 사용)
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: ebs-sc
+provisioner: ebs.csi.aws.com
+parameters:
+  type: gp3 # EBS 볼륨 타입 지정 (gp3, gp2 등)
+  fsType: ext4
+reclaimPolicy: Retain  # 볼륨 삭제 후 데이터 유지
+volumeBindingMode: WaitForFirstConsumer
