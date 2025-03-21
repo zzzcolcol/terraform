@@ -24,6 +24,14 @@ spec:
           volumeMounts:
             - name: nginx-config-volume
               mountPath: /etc/nginx/conf.d
+        - name: init-index-html
+          image: busybox
+          securityContext:
+            runAsUser: 0
+          command: ['sh', '-c', 'echo "<html><body><h1>Nginx is running</h1></body></html>" > /usr/share/nginx/html/index.html']
+          volumeMounts:
+            - name: efs-pvc
+              mountPath: /usr/share/nginx/html
       containers:
         - name: example-app
           image: nginx
@@ -35,11 +43,11 @@ spec:
           volumeMounts:
             - name: nginx-config-volume
               mountPath: /etc/nginx/conf.d
-            - name: ebs-volume
+            - name: efs-pvc
               mountPath: /usr/share/nginx/html  # EBS 볼륨 마운트
       volumes:
         - name: nginx-config-volume
           emptyDir: {}
-        - name: ebs-volume
+        - name: efs-pvc
           persistentVolumeClaim:
-            claimName: example-app-pvc  # PVC 연결
+            claimName: efs-pvc  # PVC 연결

@@ -438,7 +438,7 @@ resource "aws_eks_node_group" "eks-test-node-group" {
   ]
 
   scaling_config {
-    desired_size = 0
+    desired_size = 2
     max_size = 6
     min_size = 0
   }
@@ -460,6 +460,8 @@ resource "aws_eks_node_group" "eks-test-node-group" {
     "k8s.io/cluster-autoscaler/${var.cluster_name}" = "owned"
     "eks:nodegroup-name"                  = "eks-test-node-group"
   }
+
+
 
   depends_on = [ 
     aws_iam_role_policy_attachment.eks_node_policy,

@@ -1,0 +1,25 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  namespace: argocd
+  name: argocd-ingress
+  annotations:
+    kubernetes.io/ingress.class: alb
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}]'  # ✅ HTTP(80)만 허용, HTTPS 제거
+    alb.ingress.kubernetes.io/load-balancer-name: argo-alb
+    alb.ingress.kubernetes.io/target-type: ip  # ✅ 보통 'ip' 사용
+    alb.ingress.kubernetes.io/backend-protocol: HTTP  # ✅ HTTP만 사용
+    alb.ingress.kubernetes.io/tags: app=argo
+spec:
+  ingressClassName: alb
+  rules:
+    - http:
+        paths:
+          - path: /
+            backend:
+              service:
+                name: argocd-server  # ✅ 웹 UI 서비스
+                port:
+                  number: 80
+            pathType: Prefix
