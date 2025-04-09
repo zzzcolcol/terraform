@@ -12,4 +12,4 @@ spec:
   storageClassName: ""
   csi:
     driver: efs.csi.aws.com
-    volumeHandle: fs-04e3fcaea2c44d48a  # EFS 파일 시스템 ID 입력
+    volumeHandle: fs-027916639c99b1fc4  # EFS 파일 시스템 ID 입력
