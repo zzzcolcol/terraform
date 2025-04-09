@@ -297,6 +297,7 @@ resource "aws_security_group_rule" "eks_cluster_egress" {
   source_security_group_id = aws_security_group.eks_node_sg.id
 }
 
+
 ## eks cluster 생성
 
 resource "aws_eks_cluster" "eks-test" {
@@ -304,7 +305,7 @@ resource "aws_eks_cluster" "eks-test" {
   name = var.cluster_name
   role_arn = aws_iam_role.eks-test-role.arn
 
-  version  = "1.29"
+  version  = "1.30"
 
   vpc_config {
     endpoint_private_access = true
@@ -349,7 +350,11 @@ resource "aws_iam_role_policy_attachment" "eks_ec2_registry_policy" {
 }
 
 
-
+resource "aws_iam_role_policy_attachment" "eks_node_ssm_policy" {
+  role       = aws_iam_role.eks-test-node-role.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
+  
+}
 
 # efs csi driver iam role creation
 resource "aws_iam_role" "efs_csi_role" {
@@ -426,6 +431,38 @@ resource "aws_iam_role" "eks-test-node-role" {
 EOF
 }
 
+data "aws_ssm_parameter" "eks_ami" {
+  name   = "/aws/service/eks/optimized-ami/1.30/amazon-linux-2/recommended/image_id"
+}
+
+resource "aws_launch_template" "eks_lt" {
+  name          = "eks-node-launch-template"
+  image_id      = data.aws_ssm_parameter.eks_ami.value
+  instance_type = "t3.medium"
+
+  user_data = base64encode(<<-EOF
+    #!/bin/bash
+    /etc/eks/bootstrap.sh eks-test
+  EOF
+  )
+
+  network_interfaces {
+    associate_public_ip_address = false
+    security_groups             = [aws_security_group.eks_node_sg.id]
+  }
+
+  tag_specifications {
+    resource_type = "instance"
+    tags = {
+      Name                                        = "eks-node"
+      "kubernetes.io/cluster/${var.cluster_name}" = "owned"
+    }
+  }
+
+  lifecycle {
+    create_before_destroy = true
+  }
+}
 
 
 resource "aws_eks_node_group" "eks-test-node-group" {
@@ -436,22 +473,27 @@ resource "aws_eks_node_group" "eks-test-node-group" {
     aws_subnet.eks-test-private2a.id,
     aws_subnet.eks-test-private2c.id
   ]
+  launch_template {
+    name    = aws_launch_template.eks_lt.name
+    version = "$Latest"
+  }
+  # instance_types = [ "t3.medium" ]
 
   scaling_config {
-    desired_size = 2
+    desired_size = 0
     max_size = 6
     min_size = 0
   }
 
-  instance_types = ["t3.medium"]
+
 
   update_config {
     max_unavailable = 2
   }
-    remote_access {
-    ec2_ssh_key               = "my-key"  # 키 페어 이름
-   source_security_group_ids = [aws_security_group.eks_node_sg.id]
-  }
+  #   remote_access {
+  #   ec2_ssh_key               = "my-key"  # 키 페어 이름
+  #  source_security_group_ids = [aws_security_group.eks_node_sg.id]
+  # }
 
     tags = {
     "Name"  = "eks-test-node-group"
@@ -459,6 +501,8 @@ resource "aws_eks_node_group" "eks-test-node-group" {
     "k8s.io/cluster-autoscaler/enabled"         = "true"
     "k8s.io/cluster-autoscaler/${var.cluster_name}" = "owned"
     "eks:nodegroup-name"                  = "eks-test-node-group"
+
+    
   }
 
 
@@ -536,7 +580,7 @@ resource "aws_iam_role_policy_attachment" "ebs_csi_attach_policy" {
 resource "aws_eks_addon" "ebs_csi_addon" {
   cluster_name = aws_eks_cluster.eks-test.name  # EKS 클러스터 이름
   addon_name   = "aws-ebs-csi-driver"
-  addon_version = "v1.38.1-eksbuild.1"
+  addon_version = "v1.35.0-eksbuild.1"
   resolve_conflicts_on_create = "OVERWRITE"
   resolve_conflicts_on_update = "PRESERVE"
   
@@ -562,18 +606,20 @@ data "aws_eks_cluster_auth" "eks-test-auth" {
 resource "aws_eks_addon" "vpc_cni" {
   cluster_name = aws_eks_cluster.eks-test.name
   addon_name = "vpc-cni"
+  addon_version = "v1.18.5-eksbuild.1"
   # resolve_conflicts_on_create = "OVERWRITE"
 }
 
 resource "aws_eks_addon" "kube-proxy" {
   cluster_name = aws_eks_cluster.eks-test.name
   addon_name = "kube-proxy"
+  addon_version = "v1.29.7-eksbuild.5"
 # resolve_conflicts_on_create  = "OVERWRITE"
 }
 resource "aws_eks_addon" "efs_csi_driver" {
   cluster_name = aws_eks_cluster.eks-test.name
   addon_name = "aws-efs-csi-driver"
-  addon_version = "v2.1.0-eksbuild.1"
+  addon_version = "v2.0.8-eksbuild.1"
 # resolve_conflicts_on_create  = "OVERWRITE"
 service_account_role_arn = aws_iam_role.efs_csi_role.arn
 depends_on = [aws_iam_role_policy_attachment.efs_csi_attach_policy]
@@ -583,6 +629,7 @@ depends_on = [aws_iam_role_policy_attachment.efs_csi_attach_policy]
 resource "aws_eks_addon" "coredns" {
   cluster_name = aws_eks_cluster.eks-test.name
   addon_name = "coredns"
+  addon_version = "v1.11.3-eksbuild.1"
   # resolve_conflicts_on_create = "OVERWRITE"
 
   configuration_values = jsonencode({
@@ -717,16 +764,6 @@ resource "aws_iam_role_policy_attachment" "eks_cluster_autoscaler_attach" {
   policy_arn = aws_iam_policy.eks_cluster_autoscaler.arn
 }
 
-# resource "kubernetes_service_account" "ebs_csi_controller_sa" {
-#   metadata {
-#     name      = "ebs-csi-controller-sa"
-#     namespace = "kube-system"
-#     annotations = {
-#       "eks.amazonaws.com/role-arn" = aws_iam_role.ebs_csi_role.arn
-#     }
-#   }
-# }
-
 
 
 
@@ -754,6 +791,27 @@ output "endpoint" {
 output "kubeconfig-certificate-authority-data" {
   value = aws_eks_cluster.eks-test.certificate_authority[0].data
 }
+
+resource "aws_eks_access_entry" "example" {
+  cluster_name  = aws_eks_cluster.eks-test.name
+  principal_arn = "arn:aws:iam::120653558546:role/aws-reserved/sso.amazonaws.com/ap-northeast-2/AWSReservedSSO_AWSAdministratorAccess_20e3efd18e0823c7"
+  type          = "STANDARD"
+}
+
+
+
+resource "aws_eks_access_policy_association" "example" {
+  cluster_name  = aws_eks_cluster.eks-test.name
+  principal_arn = aws_eks_access_entry.example.principal_arn
+  policy_arn    = "arn:aws:eks::aws:cluster-access-policy/AmazonEKSAdminPolicy"
+
+  access_scope {
+    type = "cluster"
+  }
+  depends_on = [aws_eks_access_entry.example]
+}
+
+
 
 # 📌 EFS 파일 시스템 생성
 resource "aws_efs_file_system" "efs" {
