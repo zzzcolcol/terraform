@@ -186,40 +186,26 @@ resource "aws_iam_role_policy_attachment" "eks_service_policy_attachment" {
   role       = aws_iam_role.eks-test-role.name
 }
 
-
-
-# # Security group for EKS cluster
-# resource "aws_security_group" "eks-test-cluster-sg" {
-#   name        = "eks-test-cluster-sg"
-#   description = "Security group for EKS cluster"
-#   vpc_id      = aws_vpc.eks-test.id
-# }
-
-# Ingress rule for allowing traffic from another security group (EKS security group)
-# resource "aws_security_group_rule" "eks_test_ingress_rule" {
-#   type                     = "ingress"
-#   from_port                = 0
-#   to_port                  = 0
-#   protocol                 = "-1"
-#   security_group_id        = aws_security_group.eks-test-cluster-sg.id
-#   source_security_group_id = var.eks_security_group_id  # EKS 클러스터 보안 그룹 ID
-# }
-
-# # Egress rule for allowing outbound traffic to node group subnets
-# resource "aws_security_group_rule" "eks_test_egress_rule" {
-#   type              = "egress"
-#   from_port         = 0
-#   to_port           = 0
-#   protocol          = "-1"  # All protocols
-#   security_group_id = aws_security_group.eks-test-cluster-sg.id
-
-#   # CIDR blocks for node group subnets
-#   cidr_blocks = [
-#     aws_subnet.eks-test-private2a.cidr_block,  # Node group private subnet 1
-#     aws_subnet.eks-test-private2c.cidr_block   # Node group private subnet 2
-#   ]
-# }
-
+resource "aws_iam_policy" "eks_pod_identity_node_policy" {
+  name        = "EksPodIdentityNodePolicy"
+  description = "Policy for EKS node role to use Pod Identity"
+  policy      = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow",
+        Action = [
+          "eks-auth:AssumeRoleForPodIdentity"
+        ],
+        Resource = "*"
+      }
+    ]
+  })
+}
+resource "aws_iam_role_policy_attachment" "eks_node_role_policy_attachment3" {
+  role       = aws_iam_role.eks-test-role.name
+  policy_arn = aws_iam_policy.eks_pod_identity_node_policy.arn
+}
 
 
 resource "aws_security_group" "eks-test-cluster-sg" {
@@ -236,7 +222,7 @@ resource "aws_security_group" "eks-test-cluster-sg" {
     from_port = 0 
     to_port = 0
     protocol = "-1"
-    cidr_blocks = ["59.10.176.51/32","10.0.0.0/20"]
+    cidr_blocks = ["59.10.176.51/32","10.0.0.0/20","14.35.43.172/32"]
   }
 
     egress {
@@ -310,7 +296,7 @@ resource "aws_eks_cluster" "eks-test" {
   vpc_config {
     endpoint_private_access = true
     endpoint_public_access = true
-    public_access_cidrs = ["59.10.176.51/32","59.10.176.11/32"]
+    public_access_cidrs = ["59.10.176.51/32","59.10.176.11/32","14.35.43.172/32"]
     subnet_ids = [aws_subnet.eks-test-public2a.id, aws_subnet.eks-test-public2c.id,aws_subnet.eks-test-private2a.id,aws_subnet.eks-test-private2c.id]
     security_group_ids = [aws_security_group.eks-test-cluster-sg.id]
   }
@@ -539,48 +525,66 @@ resource "aws_iam_role" "ebs_csi_role" {
 }
 
 
-
-
-# resource "aws_iam_policy" "ebs_csi_policy" {
-#   name = "ebs-csi-policy"
-#   description = "EBS CSI Driver policy for EKS"
-#   policy = jsonencode({
-#     Version = "2012-10-17",
-#     Statement = [
-#       {
-#         Effect = "Allow",
-#         Action = [
-#           "ec2:CreateVolume",
-#           "ec2:AttachVolume",
-#           "ec2:DetachVolume",
-#           "ec2:DeleteVolume",
-#           "ec2:DescribeInstances",
-#           "ec2:DescribeVolumes",
-#           "ec2:DescribeVolumeAttribute",
-#           "ec2:DescribeVolumeStatus",
-#           "ec2:DescribeSnapshots",
-#           "ec2:CreateTags",
-#           "ec2:DeleteTags",
-#           "sts:AssumeRoleWithWebIdentity"
-#         ],
-#         Resource = "*"
-#       }
-#     ]
-#   })
-# }
-
 resource "aws_iam_role_policy_attachment" "ebs_csi_attach_policy" {
   role       = aws_iam_role.ebs_csi_role.name
   policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonEBSCSIDriverPolicy"
 }
 
+resource "aws_iam_role" "metrics_server_role" {
+  name = "metrics-server-addon-role" # 또는 원하시는 역할 이름
 
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Principal = {
+          Federated = "${aws_iam_openid_connect_provider.eks.arn}"
+        }
+        Action = "sts:AssumeRoleWithWebIdentity"
+        Condition = {
+          StringEquals = {
+            "${replace(aws_iam_openid_connect_provider.eks.url, "https://", "")}:sub" = "system:serviceaccount:kube-system:metrics-server"
+          }
+        }
+      }
+    ]
+  })
+
+  # 메트릭 서버에 필요한 권한 정책 연결 (예시)
+  inline_policy {
+    name = "metrics-server-policy"
+    policy = jsonencode({
+      Version = "2012-10-17"
+      Statement = [
+        {
+          Action = [
+            "ec2:DescribeInstances",
+            "ec2:DescribeNodes",
+            "ec2:DescribeVolumes",
+            "ec2:DescribeSnapshots",
+            "eks:DescribeCluster"
+          ],
+          Effect   = "Allow"
+          Resource = "*"
+        }
+      ]
+    })
+  }
+
+  # 필요한 추가 권한 정책 연결 (AWS 관리형 또는 사용자 정의)
+  # resource "aws_iam_policy_attachment" "metrics_server_policy_attachment" {
+  #   name       = "metrics-server-policy-attachment"
+  #   roles      = [aws_iam_role.metrics_server_role.name]
+  #   policy_arn = "arn:aws:iam::aws:policy/ReadOnlyAccess" # 예시
+  # }
+}
 
 
 resource "aws_eks_addon" "ebs_csi_addon" {
   cluster_name = aws_eks_cluster.eks-test.name  # EKS 클러스터 이름
   addon_name   = "aws-ebs-csi-driver"
-  addon_version = "v1.35.0-eksbuild.1"
+  addon_version = "v1.41.0-eksbuild.1"
   resolve_conflicts_on_create = "OVERWRITE"
   resolve_conflicts_on_update = "PRESERVE"
   
@@ -606,20 +610,20 @@ data "aws_eks_cluster_auth" "eks-test-auth" {
 resource "aws_eks_addon" "vpc_cni" {
   cluster_name = aws_eks_cluster.eks-test.name
   addon_name = "vpc-cni"
-  addon_version = "v1.18.5-eksbuild.1"
+  addon_version = "v1.19.0-eksbuild.1"
   # resolve_conflicts_on_create = "OVERWRITE"
 }
 
 resource "aws_eks_addon" "kube-proxy" {
   cluster_name = aws_eks_cluster.eks-test.name
   addon_name = "kube-proxy"
-  addon_version = "v1.29.7-eksbuild.5"
+  addon_version = "v1.30.6-eksbuild.3"
 # resolve_conflicts_on_create  = "OVERWRITE"
 }
 resource "aws_eks_addon" "efs_csi_driver" {
   cluster_name = aws_eks_cluster.eks-test.name
   addon_name = "aws-efs-csi-driver"
-  addon_version = "v2.0.8-eksbuild.1"
+  addon_version = "v2.1.7-eksbuild.1"
 # resolve_conflicts_on_create  = "OVERWRITE"
 service_account_role_arn = aws_iam_role.efs_csi_role.arn
 depends_on = [aws_iam_role_policy_attachment.efs_csi_attach_policy]
@@ -648,7 +652,13 @@ resource "aws_eks_addon" "coredns" {
     }
 
 
+resource "aws_eks_addon" "eks_pod_identity_agent" {
+  cluster_name = aws_eks_cluster.eks-test.name # EKS 클러스터 이름
+  addon_name   = "eks-pod-identity-agent"
+  addon_version = "v1.0.0-eksbuild.1" # 또는 지원되는 다른 버전 지정
 
+ 
+}
 
 
 data "tls_certificate" "eks" {
